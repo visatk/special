@@ -2,8 +2,9 @@ import { Context } from 'grammy';
 
 export interface Env {
 	DB: D1Database;
-	MASTER_BOT_TOKEN: string;
-	WEBHOOK_DOMAIN: string;
+	TELEGRAM_BOT_TOKEN: string;
+	WEBHOOK_SECRET: string;
+	ADMIN_CHAT_ID: string;
 }
 
 export type BotContext = Context & {
