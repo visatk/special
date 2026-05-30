@@ -3,6 +3,7 @@ CREATE TABLE users (
     telegram_id INTEGER PRIMARY KEY,
     first_name TEXT,
     username TEXT,
+    is_banned INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
