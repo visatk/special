@@ -2,25 +2,40 @@ import { webhookCallback } from 'grammy';
 import { createBot } from './bot';
 import { Env } from './types';
 
+// Timing-safe comparison to prevent Timing Attacks
+function secureCompare(a: string, b: string): boolean {
+	if (a.length !== b.length) return false;
+	let mismatch = 0;
+	for (let i = 0; i < a.length; ++i) {
+		mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+	}
+	return mismatch === 0;
+}
+
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		// Security: Only allow POST requests for webhook
+		if (request.method !== 'POST') {
+			return new Response('Method Not Allowed', { status: 405 });
+		}
+
 		const url = new URL(request.url);
 
-		if (request.method === 'POST' && url.pathname === '/webhook') {
-			// Security: Validate the incoming webhook request
+		if (url.pathname === '/webhook') {
 			const secretToken = request.headers.get('X-Telegram-Bot-Api-Secret-Token');
-			if (secretToken !== env.WEBHOOK_SECRET) {
+			
+			// Security: Validate the incoming webhook request securely
+			if (!secretToken || !secureCompare(secretToken, env.WEBHOOK_SECRET)) {
 				return new Response('Unauthorized', { status: 403 });
 			}
 
-			const bot = createBot(env);
+			// Pass both Env and ExecutionContext to the bot
+			const bot = createBot(env, ctx);
 			const handleUpdate = webhookCallback(bot, 'cloudflare-mod');
 			
-			// Process the update
 			return handleUpdate(request);
 		}
 
-		// A simple health check endpoint
-		return new Response('Rose Bot is running optimally.', { status: 200 });
+		return new Response('Rose Bot API is active.', { status: 200 });
 	},
 } satisfies ExportedHandler<Env>;
