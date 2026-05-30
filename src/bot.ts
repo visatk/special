@@ -16,14 +16,11 @@ export function createBot(env: Env, executionCtx: ExecutionContext): Bot<BotCont
 		console.error(`Error in update ${err.ctx.update.update_id}:`, err.error);
 	});
 
-	// Strict Routing Logic
-	const adminChatIdString = env.ADMIN_CHAT_ID.toString();
+	const adminChatId = env.ADMIN_CHAT_ID.toString();
 
-	// 1. Admin Feature (Only fires in the designated Admin Chat)
-	bot.filter((ctx) => ctx.chat?.id.toString() === adminChatIdString).use(adminFeature);
-
-	// 2. User Feature (Only fires in Private Chats, strictly excluding the admin chat)
-	bot.filter((ctx) => ctx.chat?.type === 'private' && ctx.chat?.id.toString() !== adminChatIdString).use(userFeature);
+	// Strict Chat Routing
+	bot.filter((ctx) => ctx.chat?.id.toString() === adminChatId).use(adminFeature);
+	bot.filter((ctx) => ctx.chat?.type === 'private' && ctx.chat?.id.toString() !== adminChatId).use(userFeature);
 
 	return bot;
 }
