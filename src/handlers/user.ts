@@ -1,8 +1,19 @@
 import { Composer } from 'grammy';
 import { BotContext } from '../types';
-import { saveMessageMappingsBatch, saveUser } from '../db/mappings';
+import { saveMessageMappingsBatch, saveUser, getUser } from '../db/mappings';
 
 export const userFeature = new Composer<BotContext>();
+
+// Middleware: Block banned users silently
+userFeature.use(async (ctx, next) => {
+	const user = ctx.from;
+	if (!user) return;
+
+	const dbUser = await getUser(ctx.env.DB, user.id);
+	if (dbUser && dbUser.is_banned === 1) return;
+	
+	await next();
+});
 
 userFeature.command('start', async (ctx) => {
 	const user = ctx.from;
@@ -10,12 +21,12 @@ userFeature.command('start', async (ctx) => {
 
 	ctx.executionCtx.waitUntil(saveUser(ctx.env.DB, user.id, user.first_name, user.username).catch(console.error));
 
-	await ctx.reply(`👋 <b>Hello, ${user.first_name}!</b>\n\nSend me any message, question, or media, and we will get back to you.`, {
+	await ctx.reply(`👋 <b>Hello, ${user.first_name}!</b>\n\nSend me any message, question, or media, and the support team will get back to you.`, {
 		parse_mode: 'HTML',
 	});
 });
 
-// Handle all incoming messages from users
+// Forward messages to admin
 userFeature.on('message', async (ctx) => {
 	const user = ctx.from;
 	if (!user) return;
@@ -24,19 +35,15 @@ userFeature.on('message', async (ctx) => {
 	const headerText = `📨 <b>New Ticket</b>\n👤 From: ${userLink}\n🆔 ID: <code>${user.id}</code>\n\n`;
 
 	try {
-		// 1. Send Header
 		const headerMsg = await ctx.api.sendMessage(ctx.env.ADMIN_CHAT_ID, headerText, { parse_mode: 'HTML' });
-		// 2. Copy actual message (supports all media types)
 		const copiedMsg = await ctx.copyMessage(ctx.env.ADMIN_CHAT_ID);
 
-		// Bug Fix & Performance: Map both messages to the user using a background batch operation
 		ctx.executionCtx.waitUntil(
-			saveMessageMappingsBatch(ctx.env.DB, user.id, ctx.message.message_id, [headerMsg.message_id, copiedMsg.message_id]).catch(
-				(err) => console.error('Failed to save mappings:', err)
-			)
+			saveMessageMappingsBatch(ctx.env.DB, user.id, ctx.message.message_id, [headerMsg.message_id, copiedMsg.message_id])
+				.catch(console.error)
 		);
 	} catch (error) {
-		console.error('Failed to forward to admin:', error);
+		console.error('Failed to forward:', error);
 		await ctx.reply('⚠️ Our servers are currently busy. Please try again later.');
 	}
 });
