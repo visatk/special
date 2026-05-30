@@ -32,6 +32,6 @@ export default {
 			return handleUpdate(request);
 		}
 
-		return new Response('Bot is running.', { status: 200 });
+		return new Response('Rose Bot API is active.', { status: 200 });
 	},
 } satisfies ExportedHandler<Env>;
