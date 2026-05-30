@@ -1,38 +1,42 @@
-import { Composer } from 'grammy';
+import { Composer, GrammyError } from 'grammy';
 import { BotContext } from '../types';
 import { getMessageMapping } from '../db/mappings';
 
 export const adminFeature = new Composer<BotContext>();
 
+// Admin Help Command
+adminFeature.command('start', async (ctx) => {
+	await ctx.reply('👨‍💻 <b>Admin Panel Online.</b>\nReply to any forwarded user message to send them a response.', { parse_mode: 'HTML' });
+});
+
+// Handle Admin Replies
 adminFeature.on('message', async (ctx) => {
-	// Must be a reply to a message
 	const replyTo = ctx.message.reply_to_message;
 	if (!replyTo) return;
 
 	try {
-		// Find who this message originally belonged to
 		const mapping = await getMessageMapping(ctx.env.DB, replyTo.message_id);
-		
-		if (!mapping) {
-			// If not found, it might be the header message or an untracked message. Just ignore.
-			return; 
-		}
+		if (!mapping) return; // Not a user message
 
-		// Copy the admin's reply back to the specific user
-		await ctx.copyMessage(mapping.user_telegram_id);
-		
-		// UX: Confirm to admin that message was sent
-		const confirmation = await ctx.reply('✅ Reply sent to user.', { 
-			reply_parameters: { message_id: ctx.message.message_id }
+		// UX Upgrade: Use reply_parameters to reply contextually to the user's exact message
+		await ctx.copyMessage(mapping.user_telegram_id, {
+			reply_parameters: { message_id: mapping.user_message_id },
 		});
 
-		// Auto-delete confirmation after 3 seconds to keep admin chat clean
+		// UI/UX: Self-destructing confirmation to keep admin group clean
+		const confirmation = await ctx.reply('✅ Sent securely to the user.', {
+			reply_parameters: { message_id: ctx.message.message_id },
+		});
+
 		setTimeout(() => {
 			ctx.api.deleteMessage(ctx.chat.id, confirmation.message_id).catch(() => {});
 		}, 3000);
-
 	} catch (error) {
-		console.error('Failed to send reply to user:', error);
-		await ctx.reply('❌ Failed to send reply. The user might have blocked the bot.');
+		if (error instanceof GrammyError && error.error_code === 403) {
+			await ctx.reply('❌ Delivery Failed: The user has blocked the bot.');
+		} else {
+			console.error('Reply error:', error);
+			await ctx.reply('❌ System Error: Could not deliver the message.');
+		}
 	}
 });
