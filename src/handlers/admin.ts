@@ -19,6 +19,7 @@ adminFeature.command('stats', async (ctx) => {
 		const stats = await getStats(ctx.env.DB);
 		await ctx.reply(`📊 <b>Statistics</b>\n\n👥 Users: <code>${stats.totalUsers}</code>\n📨 Messages: <code>${stats.totalMessages}</code>`, { parse_mode: 'HTML' });
 	} catch (error) {
+		console.error("Stats Error:", error);
 		await ctx.reply('❌ Failed to fetch stats.');
 	}
 });
@@ -32,6 +33,7 @@ adminFeature.command('broadcast', async (ctx) => {
 	try {
 		const userIds = await getAllUserIds(ctx.env.DB);
 		
+		// Run in background and safely catch any unhandled promise rejections
 		ctx.executionCtx.waitUntil(
 			(async () => {
 				let success = 0; let failed = 0;
@@ -40,13 +42,14 @@ adminFeature.command('broadcast', async (ctx) => {
 						await ctx.api.sendMessage(id, `📢 <b>Announcement</b>\n\n${message}`, { parse_mode: 'HTML' });
 						success++;
 					} catch (e) { failed++; }
-					await new Promise(res => setTimeout(res, 35)); // Rate limit protection
+					// Respect Telegram's 30 msgs/sec rate limit
+					await new Promise(res => setTimeout(res, 35)); 
 				}
 				await ctx.api.editMessageText(ctx.chat.id, confirmation.message_id, `✅ <b>Broadcast Done!</b>\n🟢 Success: ${success}\n🔴 Failed: ${failed}`, { parse_mode: 'HTML' });
-			})()
+			})().catch(err => console.error("Broadcast failed in background:", err))
 		);
 	} catch (error) {
-		await ctx.api.editMessageText(ctx.chat.id, confirmation.message_id, '❌ Broadcast failed.');
+		await ctx.api.editMessageText(ctx.chat.id, confirmation.message_id, '❌ Broadcast failed to initialize.');
 	}
 });
 
@@ -62,11 +65,11 @@ adminFeature.command(['ban', 'unban'], async (ctx) => {
 		await setBanStatus(ctx.env.DB, mapping.user_telegram_id, isBan ? 1 : 0);
 		await ctx.reply(`✅ User <code>${mapping.user_telegram_id}</code> <b>${isBan ? 'Banned 🚫' : 'Unbanned 🟢'}</b>.`, { parse_mode: 'HTML' });
 	} catch (error) {
+		console.error("Ban Error:", error);
 		await ctx.reply('❌ Database error.');
 	}
 });
 
-// Reply to user
 adminFeature.on('message', async (ctx) => {
 	const replyTo = ctx.message.reply_to_message;
 	if (!replyTo) return;
