@@ -1,6 +1,6 @@
-import { Composer, GrammyError } from 'grammy';
+import { Composer, GrammyError, InlineKeyboard } from 'grammy';
 import { BotContext } from '../types';
-import { getMessageMapping, getStats, setBanStatus, getAllUserIds } from '../db/mappings';
+import { getMessageMapping, getStats, setBanStatus, getAllUserIds, clearUserCache } from '../db/mappings';
 
 export const adminFeature = new Composer<BotContext>();
 
@@ -8,22 +8,22 @@ adminFeature.command('start', async (ctx) => {
 	const text = `👨‍💻 <b>Admin Panel Online</b>\n\n` +
 		`<b>Commands:</b>\n` +
 		`• /stats - Bot statistics\n` +
-		`• /broadcast &lt;msg&gt; - Message all users\n\n` +
+		`• /broadcast &lt;msg&gt; - Message all active users\n\n` +
 		`<b>Moderation:</b>\n` +
-		`Reply to a user's message with <code>/ban</code> or <code>/unban</code>.`;
+		`Use the interactive buttons under new tickets to Ban/Unban users, or simply reply to their messages to respond.`;
 	await ctx.reply(text, { parse_mode: 'HTML' });
 });
 
 adminFeature.command('stats', async (ctx) => {
 	try {
 		const stats = await getStats(ctx.env.DB);
-		await ctx.reply(`📊 <b>Statistics</b>\n\n👥 Users: <code>${stats.totalUsers}</code>\n📨 Messages: <code>${stats.totalMessages}</code>`, { parse_mode: 'HTML' });
+		await ctx.reply(`📊 <b>Statistics</b>\n\n👥 Active Users: <code>${stats.totalUsers}</code>\n📨 Total Messages: <code>${stats.totalMessages}</code>`, { parse_mode: 'HTML' });
 	} catch (error) {
-		console.error("Stats Error:", error);
 		await ctx.reply('❌ Failed to fetch stats.');
 	}
 });
 
+// Broadcast Engine: Optimized for Cloudflare Workers & Telegram Rate Limits
 adminFeature.command('broadcast', async (ctx) => {
 	const message = ctx.match;
 	if (!message) return ctx.reply('⚠️ Provide a message. Example: <code>/broadcast Hello!</code>', { parse_mode: 'HTML' });
@@ -33,19 +33,28 @@ adminFeature.command('broadcast', async (ctx) => {
 	try {
 		const userIds = await getAllUserIds(ctx.env.DB);
 		
-		// Run in background and safely catch any unhandled promise rejections
 		ctx.executionCtx.waitUntil(
 			(async () => {
 				let success = 0; let failed = 0;
-				for (const id of userIds) {
-					try {
-						await ctx.api.sendMessage(id, `📢 <b>Announcement</b>\n\n${message}`, { parse_mode: 'HTML' });
-						success++;
-					} catch (e) { failed++; }
-					// Respect Telegram's 30 msgs/sec rate limit
-					await new Promise(res => setTimeout(res, 35)); 
+				const chunkSize = 25; // Send 25 messages concurrently per second
+
+				for (let i = 0; i < userIds.length; i += chunkSize) {
+					const chunk = userIds.slice(i, i + chunkSize);
+					
+					await Promise.all(chunk.map(async (id) => {
+						try {
+							await ctx.api.sendMessage(id, `📢 <b>Announcement</b>\n\n${message}`, { parse_mode: 'HTML' });
+							success++;
+						} catch (e) {
+							failed++;
+						}
+					}));
+
+					if (i + chunkSize < userIds.length) {
+						await new Promise(res => setTimeout(res, 1000)); // Crucial for Rate Limit
+					}
 				}
-				await ctx.api.editMessageText(ctx.chat.id, confirmation.message_id, `✅ <b>Broadcast Done!</b>\n🟢 Success: ${success}\n🔴 Failed: ${failed}`, { parse_mode: 'HTML' });
+				await ctx.api.editMessageText(ctx.chat.id, confirmation.message_id, `✅ <b>Broadcast Completed!</b>\n\n🟢 Success: ${success}\n🔴 Failed: ${failed}`, { parse_mode: 'HTML' });
 			})().catch(err => console.error("Broadcast failed in background:", err))
 		);
 	} catch (error) {
@@ -53,23 +62,28 @@ adminFeature.command('broadcast', async (ctx) => {
 	}
 });
 
-adminFeature.command(['ban', 'unban'], async (ctx) => {
-	const replyTo = ctx.message?.reply_to_message;
-	if (!replyTo) return ctx.reply('⚠️ Reply to a user message first.');
-
-	const mapping = await getMessageMapping(ctx.env.DB, replyTo.message_id);
-	if (!mapping) return ctx.reply('⚠️ User not found.');
-
-	const isBan = ctx.message.text.startsWith('/ban');
-	try {
-		await setBanStatus(ctx.env.DB, mapping.user_telegram_id, isBan ? 1 : 0);
-		await ctx.reply(`✅ User <code>${mapping.user_telegram_id}</code> <b>${isBan ? 'Banned 🚫' : 'Unbanned 🟢'}</b>.`, { parse_mode: 'HTML' });
-	} catch (error) {
-		console.error("Ban Error:", error);
-		await ctx.reply('❌ Database error.');
-	}
+// Interactive Ban/Unban Callbacks
+adminFeature.callbackQuery(/^ban_(\d+)$/, async (ctx) => {
+	const userId = parseInt(ctx.match[1]);
+	await setBanStatus(ctx.env.DB, userId, 1);
+	clearUserCache(userId); // Invalidate cache immediately
+	
+	await ctx.answerCallbackQuery('User banned 🚫');
+	const keyboard = new InlineKeyboard().text('🟢 Unban', `unban_${userId}`);
+	await ctx.editMessageReplyMarkup({ reply_markup: keyboard }).catch(() => {});
 });
 
+adminFeature.callbackQuery(/^unban_(\d+)$/, async (ctx) => {
+	const userId = parseInt(ctx.match[1]);
+	await setBanStatus(ctx.env.DB, userId, 0);
+	clearUserCache(userId);
+	
+	await ctx.answerCallbackQuery('User unbanned 🟢');
+	const keyboard = new InlineKeyboard().text('🚫 Ban', `ban_${userId}`);
+	await ctx.editMessageReplyMarkup({ reply_markup: keyboard }).catch(() => {});
+});
+
+// Seamless Reply Engine
 adminFeature.on('message', async (ctx) => {
 	const replyTo = ctx.message.reply_to_message;
 	if (!replyTo) return;
@@ -82,11 +96,13 @@ adminFeature.on('message', async (ctx) => {
 			reply_parameters: { message_id: mapping.user_message_id },
 		});
 
-		const confirmation = await ctx.reply('✅ Sent.', { reply_parameters: { message_id: ctx.message.message_id } });
+		const confirmation = await ctx.reply('✅ Reply delivered.', { reply_parameters: { message_id: ctx.message.message_id } });
 		setTimeout(() => ctx.api.deleteMessage(ctx.chat.id, confirmation.message_id).catch(() => {}), 3000);
-	} catch (error) {
+	} catch (error: any) {
 		if (error instanceof GrammyError && error.error_code === 403) {
-			await ctx.reply('❌ Failed: User blocked the bot.');
+			await ctx.reply('❌ Delivery Failed: The user has blocked the bot.');
+		} else {
+			await ctx.reply('❌ System Error: Could not deliver the message.');
 		}
 	}
 });
