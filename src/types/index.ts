@@ -9,4 +9,4 @@ export interface Env {
 export type BotContext = Context & {
 	env: Env;
 	executionCtx: ExecutionContext;
-}
+};
