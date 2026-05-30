@@ -18,7 +18,7 @@ export function createBot(env: Env, executionCtx: ExecutionContext): Bot<BotCont
 
 	const adminChatId = env.ADMIN_CHAT_ID.toString();
 
-	// Strict Chat Routing
+	// Zero-confusion chat routing
 	bot.filter((ctx) => ctx.chat?.id.toString() === adminChatId).use(adminFeature);
 	bot.filter((ctx) => ctx.chat?.type === 'private' && ctx.chat?.id.toString() !== adminChatId).use(userFeature);
 
