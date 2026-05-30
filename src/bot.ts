@@ -16,14 +16,14 @@ export function createBot(env: Env, executionCtx: ExecutionContext): Bot<BotCont
 		console.error(`Error in update ${err.ctx.update.update_id}:`, err.error);
 	});
 
-	// Routing logic: Separate Admin commands from User commands
-	bot.route((ctx) => {
-		const isFromAdminChat = ctx.chat?.id.toString() === ctx.env.ADMIN_CHAT_ID;
-		return isFromAdminChat ? 'admin' : 'user';
-	}, {
-		admin: adminFeature,
-		user: userFeature,
-	});
+	// Strict Routing Logic
+	const adminChatIdString = env.ADMIN_CHAT_ID.toString();
+
+	// 1. Admin Feature (Only fires in the designated Admin Chat)
+	bot.filter((ctx) => ctx.chat?.id.toString() === adminChatIdString).use(adminFeature);
+
+	// 2. User Feature (Only fires in Private Chats, strictly excluding the admin chat)
+	bot.filter((ctx) => ctx.chat?.type === 'private' && ctx.chat?.id.toString() !== adminChatIdString).use(userFeature);
 
 	return bot;
 }
